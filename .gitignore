@@ -5,7 +5,6 @@ android/app/build/
 android/build/
 android/local.properties
 *.keystore
-!debug.keystore
 
 # iOS build artifacts
 ios/Pods/
