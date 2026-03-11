@@ -15,9 +15,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "13B07F861A680F5B00A75B9A"
-               BuildableName = "huddletalk_app.app"
-               BlueprintName = "huddletalk_app"
-               ReferencedContainer = "container:huddletalk_app.xcodeproj">
+               BuildableName = "workinabox.app"
+               BlueprintName = "workinabox"
+               ReferencedContainer = "container:workinabox.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -33,9 +33,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "00E356ED1AD99517003FC87E"
-               BuildableName = "huddletalk_appTests.xctest"
-               BlueprintName = "huddletalk_appTests"
-               ReferencedContainer = "container:huddletalk_app.xcodeproj">
+               BuildableName = "workinaboxTests.xctest"
+               BlueprintName = "workinaboxTests"
+               ReferencedContainer = "container:workinabox.xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>
@@ -55,9 +55,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "13B07F861A680F5B00A75B9A"
-            BuildableName = "huddletalk_app.app"
-            BlueprintName = "huddletalk_app"
-            ReferencedContainer = "container:huddletalk_app.xcodeproj">
+            BuildableName = "workinabox.app"
+            BlueprintName = "workinabox"
+            ReferencedContainer = "container:workinabox.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -72,9 +72,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "13B07F861A680F5B00A75B9A"
-            BuildableName = "huddletalk_app.app"
-            BlueprintName = "huddletalk_app"
-            ReferencedContainer = "container:huddletalk_app.xcodeproj">
+            BuildableName = "workinabox.app"
+            BlueprintName = "workinabox"
+            ReferencedContainer = "container:workinabox.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>
