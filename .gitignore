@@ -12,6 +12,7 @@ ios/build/
 ios/DerivedData/
 ios/*.xcworkspace
 ios/Podfile.lock
+**/.xcode.env.local
 
 # Logs
 logs
