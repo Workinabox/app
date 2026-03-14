@@ -6,6 +6,7 @@ import {
   Platform,
   Pressable,
   SafeAreaView,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -14,13 +15,9 @@ import { Device } from "mediasoup-client";
 import type {
   Consumer,
   DtlsParameters,
-  IceCandidate,
-  IceParameters,
   MediaKind,
   Producer,
-  RtpCapabilities,
   RtpParameters,
-  SctpParameters,
   Transport,
 } from "mediasoup-client/types";
 import {
@@ -28,131 +25,26 @@ import {
   mediaDevices,
   registerGlobals,
 } from "react-native-webrtc";
-
-type Room = {
-  room_id: string;
-  capacity: number;
-};
-
-type TransportDirection = "send" | "recv";
-
-type ClientSignal =
-  | { type: "join"; room_id: string }
-  | { type: "create_webrtc_transport"; direction: TransportDirection }
-  | {
-    type: "connect_webrtc_transport";
-    transport_id: string;
-    dtls_parameters: DtlsParameters;
-  }
-  | {
-    type: "produce";
-    transport_id: string;
-    kind: MediaKind;
-    rtp_parameters: RtpParameters;
-  }
-  | {
-    type: "consume";
-    transport_id: string;
-    producer_id: string;
-    rtp_capabilities: RtpCapabilities;
-  }
-  | { type: "resume_consumer"; consumer_id: string }
-  | { type: "ping" };
-
-type JoinedSignal = {
-  type: "joined";
-  peer_id: string;
-  room_id: string;
-  router_rtp_capabilities: RtpCapabilities;
-  existing_producer_ids: string[];
-};
-
-type WebrtcTransportCreatedSignal = {
-  type: "webrtc_transport_created";
-  direction: TransportDirection;
-  transport_id: string;
-  ice_parameters: IceParameters;
-  ice_candidates: IceCandidate[];
-  dtls_parameters: DtlsParameters;
-  sctp_parameters?: SctpParameters;
-};
-
-type TransportConnectedSignal = {
-  type: "transport_connected";
-  transport_id: string;
-};
-
-type ProducedSignal = {
-  type: "produced";
-  producer_id: string;
-};
-
-type NewProducerSignal = {
-  type: "new_producer";
-  peer_id: string;
-  producer_id: string;
-};
-
-type ConsumedSignal = {
-  type: "consumed";
-  consumer_id: string;
-  producer_id: string;
-  kind: MediaKind;
-  rtp_parameters: RtpParameters;
-};
-
-type ConsumerResumedSignal = {
-  type: "consumer_resumed";
-  consumer_id: string;
-};
-
-type PeerLeftSignal = {
-  type: "peer_left";
-  peer_id: string;
-};
-
-type ErrorSignal = {
-  type: "error";
-  message: string;
-};
-
-type PongSignal = {
-  type: "pong";
-};
-
-type ServerSignal =
-  | JoinedSignal
-  | WebrtcTransportCreatedSignal
-  | TransportConnectedSignal
-  | ProducedSignal
-  | NewProducerSignal
-  | ConsumedSignal
-  | ConsumerResumedSignal
-  | PeerLeftSignal
-  | ErrorSignal
-  | PongSignal;
-
-type ServerEnvelope = ServerSignal & {
-  request_id?: number;
-};
-
-type PendingRequest = {
-  resolve: (signal: ServerSignal) => void;
-  reject: (error: Error) => void;
-  timeout: ReturnType<typeof setTimeout>;
-};
-
-// Set this to your Mac's LAN IP for real phones on the same Wi-Fi.
-// Empty string = use local emulator/simulator defaults.
-const LAN_BACKEND_HOST = "";
-
-const DEFAULT_HTTP_BASE_URL = LAN_BACKEND_HOST
-  ? `http://${LAN_BACKEND_HOST}:8080`
-  : Platform.OS === "android"
-    ? "http://10.0.2.2:8080"
-    : "http://127.0.0.1:8080";
-const HTTP_BASE_URL = DEFAULT_HTTP_BASE_URL;
-const SIGNAL_URL = `${HTTP_BASE_URL.replace(/^http/, "ws")}/signal`;
+import { agentAudioPlayer as AgentAudioPlayer } from "./src/agentAudioPlayer";
+import { HTTP_BASE_URL, SIGNAL_URL } from "./src/backendConfig";
+import type {
+  AgentUtterance,
+  ClientSignal,
+  ConsumedSignal,
+  ConsumerResumedSignal,
+  MeetingEndedSignal,
+  MeetingJoinedSignal,
+  MeetingSnapshot,
+  MinutesDocument,
+  PendingRequest,
+  ProducedSignal,
+  ServerEnvelope,
+  ServerSignal,
+  TransportConnectedSignal,
+  TransportDirection,
+  ParticipantSummary,
+  WebrtcTransportCreatedSignal,
+} from "./src/meetingProtocol";
 
 function formatError(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message) {
@@ -166,20 +58,37 @@ function formatError(error: unknown, fallback: string): string {
     if (serialized && serialized !== "{}") {
       return serialized;
     }
-  } catch { }
+  } catch {}
   return fallback;
 }
 
+function joinableParticipant(meeting: MeetingSnapshot): ParticipantSummary | null {
+  return (
+    meeting.participants.find(
+      (participant) =>
+        participant.participant_id === meeting.owner_participant_id &&
+        participant.kind === "human",
+    ) ??
+    meeting.participants.find((participant) => participant.kind === "human") ??
+    null
+  );
+}
+
 export default function App() {
-  const [rooms, setRooms] = useState<Room[]>([]);
+  const [meetings, setMeetings] = useState<MeetingSnapshot[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeRoom, setActiveRoom] = useState<string | null>(null);
+  const [activeMeetingId, setActiveMeetingId] = useState<string | null>(null);
+  const [activeMeeting, setActiveMeeting] = useState<MeetingSnapshot | null>(null);
+  const [activeParticipantId, setActiveParticipantId] = useState<string | null>(null);
+  const [activeParticipantName, setActiveParticipantName] = useState<string | null>(null);
   const [status, setStatus] = useState("idle");
   const [connectionState, setConnectionState] = useState("new");
   const [micStatus, setMicStatus] = useState("idle");
   const [audioSendStatus, setAudioSendStatus] = useState("not sending");
   const [micEnabled, setMicEnabled] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [agentUtterances, setAgentUtterances] = useState<AgentUtterance[]>([]);
+  const [minutes, setMinutes] = useState<MinutesDocument | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const deviceRef = useRef<Device | null>(null);
@@ -198,6 +107,7 @@ export default function App() {
   const pendingRequestsRef = useRef<Map<number, PendingRequest>>(new Map());
   const consumedProducerIdsRef = useRef<Set<string>>(new Set());
   const queuedProducerIdsRef = useRef<Set<string>>(new Set());
+  const agentPlaybackQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   const stopAudioStatsLoop = useCallback(() => {
     if (statsIntervalRef.current) {
@@ -256,7 +166,12 @@ export default function App() {
 
     stopAudioStatsLoop();
     stopLocalStream();
-    setActiveRoom(null);
+    setActiveMeetingId(null);
+    setActiveMeeting(null);
+    setActiveParticipantId(null);
+    setActiveParticipantName(null);
+    setAgentUtterances([]);
+    setMinutes(null);
     setConnectionState("new");
   }, [rejectAllPendingRequests, stopAudioStatsLoop, stopLocalStream]);
 
@@ -355,30 +270,68 @@ export default function App() {
     setMicStatus(nextEnabled ? "capturing" : "muted");
   }, []);
 
-  const fetchRooms = useCallback(async () => {
+  const pauseLocalMicrophoneForAgentPlayback = useCallback(() => {
+    const stream = localStreamRef.current;
+    const tracks = stream?.getAudioTracks?.() ?? [];
+    const previousStates: Array<{ track: any; enabled: boolean }> = tracks.map(
+      (track: any) => ({
+        track,
+        enabled: track.enabled !== false,
+      }),
+    );
+
+    if (previousStates.some(({ enabled }) => enabled)) {
+      for (const { track } of previousStates) {
+        track.enabled = false;
+      }
+      setMicEnabled(false);
+      setMicStatus("paused for agent playback");
+    }
+
+    return previousStates;
+  }, []);
+
+  const restoreLocalMicrophoneState = useCallback(
+    (previousStates: Array<{ track: any; enabled: boolean }>) => {
+      if (previousStates.length === 0) {
+        return;
+      }
+
+      for (const { track, enabled } of previousStates) {
+        track.enabled = enabled;
+      }
+
+      const anyEnabled = previousStates.some(({ enabled }) => enabled);
+      setMicEnabled(anyEnabled);
+      setMicStatus(anyEnabled ? "capturing" : "muted");
+    },
+    [],
+  );
+
+  const fetchMeetings = useCallback(async () => {
     setLoading(true);
     setErrorMessage(null);
     try {
-      const response = await fetch(`${HTTP_BASE_URL}/rooms`);
+      const response = await fetch(`${HTTP_BASE_URL}/meetings`);
       if (!response.ok) {
-        throw new Error(`rooms request failed: ${response.status}`);
+        throw new Error(`meetings request failed: ${response.status}`);
       }
-      const payload = (await response.json()) as Room[];
-      setRooms(payload);
-      setStatus(`loaded ${payload.length} room(s)`);
+      const payload = (await response.json()) as MeetingSnapshot[];
+      setMeetings(payload);
+      setStatus(`loaded ${payload.length} meeting(s)`);
     } catch (error) {
       const message = formatError(error, "unknown error");
       setErrorMessage(message);
-      setStatus("failed to load rooms");
+      setStatus("failed to load meetings");
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void fetchRooms();
+    void fetchMeetings();
     return disconnect;
-  }, [disconnect, fetchRooms]);
+  }, [disconnect, fetchMeetings]);
 
   const sendRequest = useCallback(
     <T extends ServerSignal>(signal: ClientSignal): Promise<T> => {
@@ -413,7 +366,7 @@ export default function App() {
   );
 
   const consumeProducer = useCallback(
-    async (producerId: string, roomId: string) => {
+    async (producerId: string, meetingId: string) => {
       const device = deviceRef.current;
       const recvTransport = recvTransportRef.current;
 
@@ -454,7 +407,7 @@ export default function App() {
           consumer_id: consumer.id,
         });
 
-        setStatus(`receiving media in ${roomId}`);
+        setStatus(`receiving media in ${meetingId}`);
       } catch (error) {
         consumedProducerIdsRef.current.delete(producerId);
         const message = formatError(error, "failed to consume remote audio");
@@ -466,12 +419,12 @@ export default function App() {
   );
 
   const drainQueuedProducers = useCallback(
-    async (roomId: string) => {
+    async (meetingId: string) => {
       const producerIds = [...queuedProducerIdsRef.current];
       queuedProducerIdsRef.current.clear();
 
       for (const producerId of producerIds) {
-        await consumeProducer(producerId, roomId);
+        await consumeProducer(producerId, meetingId);
       }
     },
     [consumeProducer],
@@ -481,7 +434,7 @@ export default function App() {
     async (
       device: Device,
       direction: TransportDirection,
-      roomId: string,
+      meetingId: string,
     ): Promise<Transport> => {
       const created = await sendRequest<WebrtcTransportCreatedSignal>({
         type: "create_webrtc_transport",
@@ -491,19 +444,19 @@ export default function App() {
       const transport: Transport =
         direction === "send"
           ? device.createSendTransport({
-            id: created.transport_id,
-            iceParameters: created.ice_parameters,
-            iceCandidates: created.ice_candidates,
-            dtlsParameters: created.dtls_parameters,
-            sctpParameters: created.sctp_parameters,
-          })
+              id: created.transport_id,
+              iceParameters: created.ice_parameters,
+              iceCandidates: created.ice_candidates,
+              dtlsParameters: created.dtls_parameters,
+              sctpParameters: created.sctp_parameters,
+            })
           : device.createRecvTransport({
-            id: created.transport_id,
-            iceParameters: created.ice_parameters,
-            iceCandidates: created.ice_candidates,
-            dtlsParameters: created.dtls_parameters,
-            sctpParameters: created.sctp_parameters,
-          });
+              id: created.transport_id,
+              iceParameters: created.ice_parameters,
+              iceCandidates: created.ice_candidates,
+              dtlsParameters: created.dtls_parameters,
+              sctpParameters: created.sctp_parameters,
+            });
 
       transport.on("connect", ({ dtlsParameters }, callback, errback) => {
         void (async () => {
@@ -540,7 +493,7 @@ export default function App() {
 
       transport.on("connectionstatechange", (state) => {
         setConnectionState(state);
-        setStatus(`webrtc ${state} (${roomId}, ${direction})`);
+        setStatus(`webrtc ${state} (${meetingId}, ${direction})`);
       });
 
       return transport;
@@ -548,14 +501,73 @@ export default function App() {
     [sendRequest],
   );
 
+  const playAgentAudio = useCallback(async (audioBase64: string) => {
+    if (!AgentAudioPlayer) {
+      setStatus("agent audio clip received (native player unavailable)");
+      return;
+    }
+
+    const previousMicState = pauseLocalMicrophoneForAgentPlayback();
+    try {
+      await AgentAudioPlayer.playBase64Wav(audioBase64);
+    } catch (error) {
+      const message = formatError(error, "unknown audio playback error");
+      setErrorMessage(message);
+      setStatus("failed to play agent audio");
+    } finally {
+      restoreLocalMicrophoneState(previousMicState);
+    }
+  }, [pauseLocalMicrophoneForAgentPlayback, restoreLocalMicrophoneState]);
+
   const handleServerEvent = useCallback(
-    (signal: ServerSignal, roomId: string) => {
+    (signal: ServerSignal, meetingId: string) => {
       if (signal.type === "new_producer") {
-        void consumeProducer(signal.producer_id, roomId);
+        void consumeProducer(signal.producer_id, meetingId);
         return;
       }
       if (signal.type === "peer_left") {
-        setStatus(`peer ${signal.peer_id} left ${roomId}`);
+        setStatus(`peer ${signal.peer_id} left ${meetingId}`);
+        return;
+      }
+      if (signal.type === "meeting_snapshot") {
+        setActiveMeeting(signal.meeting);
+        return;
+      }
+      if (signal.type === "agent_text") {
+        setAgentUtterances((current) => [
+          ...current,
+          {
+            utterance_id: signal.utterance_id,
+            participant_id: signal.participant_id,
+            participant_name: signal.participant_name,
+            text: signal.text,
+          },
+        ]);
+        setStatus(`${signal.participant_name} responded`);
+        return;
+      }
+      if (signal.type === "agent_audio") {
+        agentPlaybackQueueRef.current = agentPlaybackQueueRef.current
+          .then(() => playAgentAudio(signal.audio_base64))
+          .catch((error) => {
+            const message = formatError(error, "failed to queue agent audio");
+            setErrorMessage(message);
+            setStatus("failed to queue agent audio");
+          });
+        return;
+      }
+      if (signal.type === "meeting_ended") {
+        setStatus(`meeting ended at ${signal.ended_at}`);
+        setActiveMeeting((current) =>
+          current
+            ? { ...current, state: "ended", ended_at: signal.ended_at }
+            : current,
+        );
+        return;
+      }
+      if (signal.type === "minutes_ready") {
+        setMinutes(signal.minutes);
+        setStatus("minutes generated");
         return;
       }
       if (signal.type === "error") {
@@ -563,14 +575,23 @@ export default function App() {
         setStatus("server rejected signaling message");
       }
     },
-    [consumeProducer],
+    [consumeProducer, playAgentAudio],
   );
 
-  const joinRoom = useCallback(
-    async (roomId: string) => {
+  const joinMeeting = useCallback(
+    async (meeting: MeetingSnapshot) => {
+      const participant = joinableParticipant(meeting);
+      if (!participant) {
+        setErrorMessage("no human participant is available to join this meeting");
+        setStatus("cannot join meeting");
+        return;
+      }
+
       disconnect();
       setErrorMessage(null);
-      setStatus(`connecting to ${roomId}...`);
+      setMinutes(null);
+      setAgentUtterances([]);
+      setStatus(`connecting to ${meeting.title}...`);
       setConnectionState("connecting");
       setMicStatus("requesting microphone...");
       setAudioSendStatus("not sending");
@@ -610,7 +631,7 @@ export default function App() {
           return;
         }
 
-        handleServerEvent(envelope, roomId);
+        handleServerEvent(envelope, meeting.meeting_id);
       };
 
       ws.onerror = () => {
@@ -652,23 +673,27 @@ export default function App() {
           const device = new Device({ handlerName: "ReactNative106" });
           deviceRef.current = device;
 
-          const joined = await sendRequest<JoinedSignal>({
-            type: "join",
-            room_id: roomId,
+          const joined = await sendRequest<MeetingJoinedSignal>({
+            type: "join_meeting",
+            meeting_id: meeting.meeting_id,
+            participant_id: participant.participant_id,
           });
 
           await device.load({
             routerRtpCapabilities: joined.router_rtp_capabilities,
           });
 
-          const sendTransport = await createTransport(device, "send", roomId);
-          const recvTransport = await createTransport(device, "recv", roomId);
+          const sendTransport = await createTransport(device, "send", meeting.meeting_id);
+          const recvTransport = await createTransport(device, "recv", meeting.meeting_id);
 
           sendTransportRef.current = sendTransport;
           recvTransportRef.current = recvTransport;
 
-          setActiveRoom(joined.room_id);
-          setStatus(`joined ${joined.room_id}`);
+          setActiveMeetingId(joined.meeting.meeting_id);
+          setActiveMeeting(joined.meeting);
+          setActiveParticipantId(joined.participant_id);
+          setActiveParticipantName(participant.name);
+          setStatus(`joined ${joined.meeting.title} as ${participant.name}`);
 
           startAudioStatsLoop(sendTransport);
 
@@ -681,13 +706,13 @@ export default function App() {
           });
           producerRef.current = producer as Producer;
 
-          setStatus(`sending audio in ${joined.room_id}`);
+          setStatus(`sending audio in ${joined.meeting.title}`);
 
           for (const producerId of joined.existing_producer_ids) {
-            await consumeProducer(producerId, joined.room_id);
+            await consumeProducer(producerId, joined.meeting.meeting_id);
           }
 
-          await drainQueuedProducers(joined.room_id);
+          await drainQueuedProducers(joined.meeting.meeting_id);
         } catch (error) {
           const message = formatError(error, "unknown connect error");
           setErrorMessage(message);
@@ -708,10 +733,31 @@ export default function App() {
     ],
   );
 
-  const leaveRoom = useCallback(() => {
-    setStatus("left room");
+  const leaveMeeting = useCallback(() => {
+    setStatus("left meeting");
     disconnect();
   }, [disconnect]);
+
+  const endMeeting = useCallback(async () => {
+    if (!activeMeetingId) {
+      return;
+    }
+    try {
+      await sendRequest<MeetingEndedSignal>({
+        type: "end_meeting",
+        meeting_id: activeMeetingId,
+      });
+    } catch (error) {
+      const message = formatError(error, "failed to end meeting");
+      setErrorMessage(message);
+      setStatus("failed to end meeting");
+    }
+  }, [activeMeetingId, sendRequest]);
+
+  const isOwner =
+    activeMeeting &&
+    activeParticipantId &&
+    activeMeeting.owner_participant_id === activeParticipantId;
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -723,26 +769,96 @@ export default function App() {
           {errorMessage ? <Text style={styles.error}>Error: {errorMessage}</Text> : null}
         </View>
 
-        {activeRoom ? (
-          <View style={styles.roomScreen}>
-            <Text style={styles.roomScreenTitle}>Room: {activeRoom}</Text>
-            <Text style={styles.status}>Connection: {connectionState}</Text>
-            <Text style={styles.status}>Mic: {micStatus}</Text>
-            <Text style={styles.status}>Outbound audio: {audioSendStatus}</Text>
+        {activeMeeting ? (
+          <ScrollView contentContainerStyle={styles.meetingScreen}>
+            <View style={styles.panel}>
+              <Text style={styles.panelTitle}>{activeMeeting.title}</Text>
+              <Text style={styles.status}>Meeting ID: {activeMeetingId}</Text>
+              <Text style={styles.status}>State: {activeMeeting.state}</Text>
+              <Text style={styles.status}>Connection: {connectionState}</Text>
+              <Text style={styles.status}>Joined as: {activeParticipantName ?? "unknown"}</Text>
+              <Text style={styles.status}>Mic: {micStatus}</Text>
+              <Text style={styles.status}>Outbound audio: {audioSendStatus}</Text>
+            </View>
+
             <View style={styles.actions}>
               <Pressable style={styles.button} onPress={toggleMicrophone}>
                 <Text style={styles.buttonText}>{micEnabled ? "Mute Mic" : "Unmute Mic"}</Text>
               </Pressable>
-              <Pressable style={styles.dangerButton} onPress={leaveRoom}>
-                <Text style={styles.buttonText}>Leave Room</Text>
+              {isOwner ? (
+                <Pressable style={styles.warningButton} onPress={() => void endMeeting()}>
+                  <Text style={styles.buttonText}>End Meeting</Text>
+                </Pressable>
+              ) : null}
+              <Pressable style={styles.dangerButton} onPress={leaveMeeting}>
+                <Text style={styles.buttonText}>Leave Meeting</Text>
               </Pressable>
             </View>
-          </View>
+
+            <View style={styles.panel}>
+              <Text style={styles.sectionTitle}>Agenda</Text>
+              {activeMeeting.agenda.map((item) => (
+                <Text key={item.agenda_item_id} style={styles.listItem}>
+                  • {item.phrase}
+                </Text>
+              ))}
+            </View>
+
+            <View style={styles.panel}>
+              <Text style={styles.sectionTitle}>Participants</Text>
+              {activeMeeting.participants.map((participant) => (
+                <Text key={participant.participant_id} style={styles.listItem}>
+                  • {participant.name} ({participant.kind}, {participant.meeting_role})
+                </Text>
+              ))}
+            </View>
+
+            <View style={styles.panel}>
+              <Text style={styles.sectionTitle}>Agent Responses</Text>
+              {agentUtterances.length === 0 ? (
+                <Text style={styles.empty}>No agent responses yet.</Text>
+              ) : (
+                agentUtterances.map((utterance) => (
+                  <View key={utterance.utterance_id} style={styles.agentCard}>
+                    <Text style={styles.agentName}>{utterance.participant_name}</Text>
+                    <Text style={styles.agentText}>{utterance.text}</Text>
+                  </View>
+                ))
+              )}
+            </View>
+
+            <View style={styles.panel}>
+              <Text style={styles.sectionTitle}>Minutes</Text>
+              {minutes ? (
+                <>
+                  <Text style={styles.status}>Owner: {minutes.owner_name}</Text>
+                  <Text style={styles.status}>Moderator: {minutes.moderator_name}</Text>
+                  <Text style={styles.status}>Ended: {minutes.ended_at}</Text>
+                  {minutes.agenda.map((item) => (
+                    <View key={item.agenda_item_id} style={styles.minutesItem}>
+                      <Text style={styles.minutesTitle}>{item.phrase}</Text>
+                      {item.decisions.length > 0 ? (
+                        item.decisions.map((decision, index) => (
+                          <Text key={`${item.agenda_item_id}-${index}`} style={styles.listItem}>
+                            • {decision}
+                          </Text>
+                        ))
+                      ) : (
+                        <Text style={styles.empty}>No recorded decisions.</Text>
+                      )}
+                    </View>
+                  ))}
+                </>
+              ) : (
+                <Text style={styles.empty}>Minutes will appear after the meeting ends.</Text>
+              )}
+            </View>
+          </ScrollView>
         ) : (
           <>
             <View style={styles.actions}>
-              <Pressable style={styles.button} onPress={() => void fetchRooms()}>
-                <Text style={styles.buttonText}>Refresh Rooms</Text>
+              <Pressable style={styles.button} onPress={() => void fetchMeetings()}>
+                <Text style={styles.buttonText}>Refresh Meetings</Text>
               </Pressable>
             </View>
 
@@ -750,22 +866,31 @@ export default function App() {
               <ActivityIndicator size="large" />
             ) : (
               <FlatList
-                data={rooms}
-                keyExtractor={(room) => room.room_id}
-                contentContainerStyle={styles.roomList}
-                renderItem={({ item }) => (
-                  <Pressable
-                    style={styles.roomCard}
-                    onPress={() => {
-                      void joinRoom(item.room_id);
-                    }}
-                  >
-                    <Text style={styles.roomName}>{item.room_id}</Text>
-                    <Text style={styles.roomMeta}>capacity: {item.capacity}</Text>
-                    <Text style={styles.roomAction}>Tap to join</Text>
-                  </Pressable>
-                )}
-                ListEmptyComponent={<Text style={styles.empty}>No rooms found.</Text>}
+                data={meetings}
+                keyExtractor={(meeting) => meeting.meeting_id}
+                contentContainerStyle={styles.meetingList}
+                renderItem={({ item }) => {
+                  const participant = joinableParticipant(item);
+                  return (
+                    <Pressable
+                      style={styles.meetingCard}
+                      onPress={() => {
+                        void joinMeeting(item);
+                      }}
+                    >
+                      <Text style={styles.meetingName}>{item.title}</Text>
+                      <Text style={styles.meetingMeta}>
+                        {item.participants.length} participant(s) • {item.agenda.length} agenda
+                        item(s)
+                      </Text>
+                      <Text style={styles.meetingMeta}>
+                        Join as: {participant ? participant.name : "no human available"}
+                      </Text>
+                      <Text style={styles.meetingAction}>Tap to join</Text>
+                    </Pressable>
+                  );
+                }}
+                ListEmptyComponent={<Text style={styles.empty}>No meetings found.</Text>}
               />
             )}
           </>
@@ -808,11 +933,18 @@ const styles = StyleSheet.create({
   },
   actions: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 10,
     marginBottom: 16,
   },
   button: {
     backgroundColor: "#1f6feb",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  warningButton: {
+    backgroundColor: "#d97706",
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 10,
@@ -827,7 +959,11 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     fontWeight: "600",
   },
-  roomScreen: {
+  meetingScreen: {
+    gap: 12,
+    paddingBottom: 32,
+  },
+  panel: {
     backgroundColor: "#ffffff",
     borderColor: "#d0d7de",
     borderWidth: 1,
@@ -835,37 +971,69 @@ const styles = StyleSheet.create({
     padding: 16,
     gap: 8,
   },
-  roomScreenTitle: {
-    fontSize: 20,
+  panelTitle: {
+    fontSize: 22,
     fontWeight: "700",
     color: "#1f2328",
-    marginBottom: 4,
   },
-  roomList: {
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#1f2328",
+  },
+  meetingList: {
     gap: 10,
     paddingBottom: 24,
   },
-  roomCard: {
+  meetingCard: {
     backgroundColor: "#ffffff",
     padding: 14,
     borderRadius: 12,
     borderColor: "#d0d7de",
     borderWidth: 1,
-    gap: 3,
+    gap: 4,
   },
-  roomName: {
+  meetingName: {
     fontSize: 18,
     fontWeight: "600",
     color: "#1f2328",
   },
-  roomMeta: {
+  meetingMeta: {
     fontSize: 13,
     color: "#59636e",
   },
-  roomAction: {
+  meetingAction: {
     marginTop: 6,
     fontSize: 12,
     color: "#1f6feb",
+  },
+  listItem: {
+    color: "#2f3b4a",
+    fontSize: 14,
+  },
+  agentCard: {
+    borderRadius: 10,
+    backgroundColor: "#f6f8fa",
+    padding: 12,
+    gap: 4,
+  },
+  agentName: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#1f2328",
+  },
+  agentText: {
+    fontSize: 14,
+    color: "#2f3b4a",
+  },
+  minutesItem: {
+    gap: 6,
+    paddingTop: 6,
+  },
+  minutesTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#1f2328",
   },
   empty: {
     color: "#59636e",
