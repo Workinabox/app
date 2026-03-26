@@ -25,7 +25,6 @@ import {
   mediaDevices,
   registerGlobals,
 } from "react-native-webrtc";
-import { agentAudioPlayer as AgentAudioPlayer } from "./src/agentAudioPlayer";
 import { HTTP_BASE_URL, SIGNAL_URL } from "./src/backendConfig";
 import type {
   AgentUtterance,
@@ -107,7 +106,6 @@ export default function App() {
   const pendingRequestsRef = useRef<Map<number, PendingRequest>>(new Map());
   const consumedProducerIdsRef = useRef<Set<string>>(new Set());
   const queuedProducerIdsRef = useRef<Set<string>>(new Set());
-  const agentPlaybackQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   const stopAudioStatsLoop = useCallback(() => {
     if (statsIntervalRef.current) {
@@ -269,44 +267,6 @@ export default function App() {
     setMicEnabled(nextEnabled);
     setMicStatus(nextEnabled ? "capturing" : "muted");
   }, []);
-
-  const pauseLocalMicrophoneForAgentPlayback = useCallback(() => {
-    const stream = localStreamRef.current;
-    const tracks = stream?.getAudioTracks?.() ?? [];
-    const previousStates: Array<{ track: any; enabled: boolean }> = tracks.map(
-      (track: any) => ({
-        track,
-        enabled: track.enabled !== false,
-      }),
-    );
-
-    if (previousStates.some(({ enabled }) => enabled)) {
-      for (const { track } of previousStates) {
-        track.enabled = false;
-      }
-      setMicEnabled(false);
-      setMicStatus("paused for agent playback");
-    }
-
-    return previousStates;
-  }, []);
-
-  const restoreLocalMicrophoneState = useCallback(
-    (previousStates: Array<{ track: any; enabled: boolean }>) => {
-      if (previousStates.length === 0) {
-        return;
-      }
-
-      for (const { track, enabled } of previousStates) {
-        track.enabled = enabled;
-      }
-
-      const anyEnabled = previousStates.some(({ enabled }) => enabled);
-      setMicEnabled(anyEnabled);
-      setMicStatus(anyEnabled ? "capturing" : "muted");
-    },
-    [],
-  );
 
   const fetchMeetings = useCallback(async () => {
     setLoading(true);
@@ -501,24 +461,6 @@ export default function App() {
     [sendRequest],
   );
 
-  const playAgentAudio = useCallback(async (audioBase64: string) => {
-    if (!AgentAudioPlayer) {
-      setStatus("agent audio clip received (native player unavailable)");
-      return;
-    }
-
-    const previousMicState = pauseLocalMicrophoneForAgentPlayback();
-    try {
-      await AgentAudioPlayer.playBase64Wav(audioBase64);
-    } catch (error) {
-      const message = formatError(error, "unknown audio playback error");
-      setErrorMessage(message);
-      setStatus("failed to play agent audio");
-    } finally {
-      restoreLocalMicrophoneState(previousMicState);
-    }
-  }, [pauseLocalMicrophoneForAgentPlayback, restoreLocalMicrophoneState]);
-
   const handleServerEvent = useCallback(
     (signal: ServerSignal, meetingId: string) => {
       if (signal.type === "new_producer") {
@@ -546,16 +488,6 @@ export default function App() {
         setStatus(`${signal.participant_name} responded`);
         return;
       }
-      if (signal.type === "agent_audio") {
-        agentPlaybackQueueRef.current = agentPlaybackQueueRef.current
-          .then(() => playAgentAudio(signal.audio_base64))
-          .catch((error) => {
-            const message = formatError(error, "failed to queue agent audio");
-            setErrorMessage(message);
-            setStatus("failed to queue agent audio");
-          });
-        return;
-      }
       if (signal.type === "meeting_ended") {
         setStatus(`meeting ended at ${signal.ended_at}`);
         setActiveMeeting((current) =>
@@ -575,7 +507,7 @@ export default function App() {
         setStatus("server rejected signaling message");
       }
     },
-    [consumeProducer, playAgentAudio],
+    [consumeProducer],
   );
 
   const joinMeeting = useCallback(

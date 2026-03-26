@@ -27,13 +27,6 @@ RCT_REMAP_METHOD(playBase64Wav,
     return;
   }
 
-  NSError *sessionError = nil;
-  [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayback error:&sessionError];
-  if (sessionError != nil) {
-    reject(@"agent_audio_session_failed", @"Failed to configure audio session", sessionError);
-    return;
-  }
-
   NSError *playerError = nil;
   self.player = [[AVAudioPlayer alloc] initWithData:audioData error:&playerError];
   if (self.player == nil || playerError != nil) {
