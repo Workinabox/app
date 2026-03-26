@@ -107,16 +107,6 @@ export type AgentTextSignal = {
   text: string;
 };
 
-export type AgentAudioSignal = {
-  type: "agent_audio";
-  meeting_id: string;
-  participant_id: string;
-  participant_name: string;
-  utterance_id: string;
-  mime_type: string;
-  audio_base64: string;
-};
-
 export type MeetingEndedSignal = {
   type: "meeting_ended";
   meeting_id: string;
@@ -187,7 +177,6 @@ export type ServerSignal =
   | MeetingJoinedSignal
   | MeetingSnapshotSignal
   | AgentTextSignal
-  | AgentAudioSignal
   | MeetingEndedSignal
   | MinutesReadySignal
   | WebrtcTransportCreatedSignal
