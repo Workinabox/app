@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -10,8 +10,8 @@ import {
   StyleSheet,
   Text,
   View,
-} from "react-native";
-import { Device } from "mediasoup-client";
+} from 'react-native';
+import { Device } from 'mediasoup-client';
 import type {
   Consumer,
   DtlsParameters,
@@ -19,13 +19,14 @@ import type {
   Producer,
   RtpParameters,
   Transport,
-} from "mediasoup-client/types";
+} from 'mediasoup-client/types';
 import {
   MediaStream,
+  MediaStreamTrack,
   mediaDevices,
   registerGlobals,
-} from "react-native-webrtc";
-import { HTTP_BASE_URL, SIGNAL_URL } from "./src/backendConfig";
+} from 'react-native-webrtc';
+import { HTTP_BASE_URL, SIGNAL_URL } from './src/backendConfig';
 import type {
   AgentUtterance,
   ClientSignal,
@@ -43,32 +44,45 @@ import type {
   TransportDirection,
   ParticipantSummary,
   WebrtcTransportCreatedSignal,
-} from "./src/meetingProtocol";
+} from './src/meetingProtocol';
+
+// Minimal shape of the WebRTC stats entries this component reads.
+interface RtcStatsEntry {
+  type?: string;
+  kind?: string;
+  isRemote?: boolean;
+  bytesSent?: number;
+  packetsSent?: number;
+}
 
 function formatError(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message) {
     return error.message;
   }
-  if (typeof error === "string" && error.length > 0) {
+  if (typeof error === 'string' && error.length > 0) {
     return error;
   }
   try {
     const serialized = JSON.stringify(error);
-    if (serialized && serialized !== "{}") {
+    if (serialized && serialized !== '{}') {
       return serialized;
     }
-  } catch {}
+  } catch {
+    // non-serializable error; fall through to the fallback message
+  }
   return fallback;
 }
 
-function joinableParticipant(meeting: MeetingSnapshot): ParticipantSummary | null {
+function joinableParticipant(
+  meeting: MeetingSnapshot,
+): ParticipantSummary | null {
   return (
     meeting.participants.find(
       (participant) =>
         participant.participant_id === meeting.owner_participant_id &&
-        participant.kind === "human",
+        participant.kind === 'human',
     ) ??
-    meeting.participants.find((participant) => participant.kind === "human") ??
+    meeting.participants.find((participant) => participant.kind === 'human') ??
     null
   );
 }
@@ -77,13 +91,19 @@ export default function App() {
   const [meetings, setMeetings] = useState<MeetingSnapshot[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeMeetingId, setActiveMeetingId] = useState<string | null>(null);
-  const [activeMeeting, setActiveMeeting] = useState<MeetingSnapshot | null>(null);
-  const [activeParticipantId, setActiveParticipantId] = useState<string | null>(null);
-  const [activeParticipantName, setActiveParticipantName] = useState<string | null>(null);
-  const [status, setStatus] = useState("idle");
-  const [connectionState, setConnectionState] = useState("new");
-  const [micStatus, setMicStatus] = useState("idle");
-  const [audioSendStatus, setAudioSendStatus] = useState("not sending");
+  const [activeMeeting, setActiveMeeting] = useState<MeetingSnapshot | null>(
+    null,
+  );
+  const [activeParticipantId, setActiveParticipantId] = useState<string | null>(
+    null,
+  );
+  const [activeParticipantName, setActiveParticipantName] = useState<
+    string | null
+  >(null);
+  const [status, setStatus] = useState('idle');
+  const [connectionState, setConnectionState] = useState('new');
+  const [micStatus, setMicStatus] = useState('idle');
+  const [audioSendStatus, setAudioSendStatus] = useState('not sending');
   const [micEnabled, setMicEnabled] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [agentUtterances, setAgentUtterances] = useState<AgentUtterance[]>([]);
@@ -95,12 +115,13 @@ export default function App() {
   const recvTransportRef = useRef<Transport | null>(null);
   const producerRef = useRef<Producer | null>(null);
   const consumersRef = useRef<Map<string, Consumer>>(new Map());
-  const localStreamRef = useRef<any | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const statsIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const lastAudioBytesRef = useRef<{ bytes: number; timestampMs: number } | null>(
-    null,
-  );
+  const lastAudioBytesRef = useRef<{
+    bytes: number;
+    timestampMs: number;
+  } | null>(null);
   const globalsRegisteredRef = useRef(false);
   const nextRequestIdRef = useRef(1);
   const pendingRequestsRef = useRef<Map<number, PendingRequest>>(new Map());
@@ -113,7 +134,7 @@ export default function App() {
       statsIntervalRef.current = null;
     }
     lastAudioBytesRef.current = null;
-    setAudioSendStatus("not sending");
+    setAudioSendStatus('not sending');
   }, []);
 
   const stopLocalStream = useCallback(() => {
@@ -124,7 +145,7 @@ export default function App() {
       }
       localStreamRef.current = null;
     }
-    setMicStatus("idle");
+    setMicStatus('idle');
     setMicEnabled(true);
   }, []);
 
@@ -137,7 +158,7 @@ export default function App() {
   }, []);
 
   const disconnect = useCallback(() => {
-    rejectAllPendingRequests("signaling disconnected");
+    rejectAllPendingRequests('signaling disconnected');
 
     if (wsRef.current) {
       wsRef.current.close();
@@ -170,48 +191,51 @@ export default function App() {
     setActiveParticipantName(null);
     setAgentUtterances([]);
     setMinutes(null);
-    setConnectionState("new");
+    setConnectionState('new');
   }, [rejectAllPendingRequests, stopAudioStatsLoop, stopLocalStream]);
 
-  const requestMicrophonePermission = useCallback(async (): Promise<boolean> => {
-    if (Platform.OS !== "android") {
-      return true;
-    }
+  const requestMicrophonePermission =
+    useCallback(async (): Promise<boolean> => {
+      if (Platform.OS !== 'android') {
+        return true;
+      }
 
-    const permission = PermissionsAndroid.PERMISSIONS.RECORD_AUDIO;
-    const alreadyGranted = await PermissionsAndroid.check(permission);
-    if (alreadyGranted) {
-      return true;
-    }
+      const permission = PermissionsAndroid.PERMISSIONS.RECORD_AUDIO;
+      const alreadyGranted = await PermissionsAndroid.check(permission);
+      if (alreadyGranted) {
+        return true;
+      }
 
-    const result = await PermissionsAndroid.request(permission);
-    return result === PermissionsAndroid.RESULTS.GRANTED;
-  }, []);
+      const result = await PermissionsAndroid.request(permission);
+      return result === PermissionsAndroid.RESULTS.GRANTED;
+    }, []);
 
   const startAudioStatsLoop = useCallback(
     (sendTransport: Transport) => {
       stopAudioStatsLoop();
-      setAudioSendStatus("collecting audio stats...");
+      setAudioSendStatus('collecting audio stats...');
 
       statsIntervalRef.current = setInterval(async () => {
         try {
           const rawStats = await sendTransport.getStats();
-          let reports: any[] = [];
+          let reports: RtcStatsEntry[] = [];
 
           if (rawStats instanceof Map) {
             reports = Array.from(rawStats.values());
           } else if (Array.isArray(rawStats)) {
             reports = rawStats;
-          } else if (rawStats && typeof rawStats === "object") {
-            reports = Object.values(rawStats as Record<string, unknown>);
+          } else if (rawStats && typeof rawStats === 'object') {
+            reports = Object.values(
+              rawStats as Record<string, unknown>,
+            ) as RtcStatsEntry[];
           }
 
           let bytesSent = 0;
           let packetsSent = 0;
           for (const report of reports) {
             if (
-              report?.type === "outbound-rtp" &&
-              report?.kind === "audio" &&
+              report?.type === 'outbound-rtp' &&
+              report?.kind === 'audio' &&
               report?.isRemote !== true
             ) {
               bytesSent += Number(report.bytesSent ?? 0);
@@ -220,13 +244,19 @@ export default function App() {
           }
 
           if (bytesSent <= 0) {
-            setAudioSendStatus("connected, waiting for outbound audio packets...");
+            setAudioSendStatus(
+              'connected, waiting for outbound audio packets...',
+            );
             return;
           }
 
           const now = Date.now();
           const previous = lastAudioBytesRef.current;
-          if (!previous || now <= previous.timestampMs || bytesSent < previous.bytes) {
+          if (
+            !previous ||
+            now <= previous.timestampMs ||
+            bytesSent < previous.bytes
+          ) {
             lastAudioBytesRef.current = { bytes: bytesSent, timestampMs: now };
             setAudioSendStatus(`audio sent ${packetsSent} packets`);
             return;
@@ -234,13 +264,14 @@ export default function App() {
 
           const deltaBytes = bytesSent - previous.bytes;
           const deltaSeconds = (now - previous.timestampMs) / 1000;
-          const kbps = deltaSeconds > 0 ? (deltaBytes * 8) / (deltaSeconds * 1000) : 0;
+          const kbps =
+            deltaSeconds > 0 ? (deltaBytes * 8) / (deltaSeconds * 1000) : 0;
           lastAudioBytesRef.current = { bytes: bytesSent, timestampMs: now };
           setAudioSendStatus(
             `sending ${kbps.toFixed(1)} kbps (${packetsSent} packets total)`,
           );
         } catch (error) {
-          const message = formatError(error, "unknown stats error");
+          const message = formatError(error, 'unknown stats error');
           setAudioSendStatus(`audio stats unavailable (${message})`);
         }
       }, 1500);
@@ -256,7 +287,7 @@ export default function App() {
 
     const tracks = stream.getAudioTracks?.() ?? [];
     if (tracks.length === 0) {
-      setMicStatus("no local audio track");
+      setMicStatus('no local audio track');
       return;
     }
 
@@ -265,7 +296,7 @@ export default function App() {
       track.enabled = nextEnabled;
     }
     setMicEnabled(nextEnabled);
-    setMicStatus(nextEnabled ? "capturing" : "muted");
+    setMicStatus(nextEnabled ? 'capturing' : 'muted');
   }, []);
 
   const fetchMeetings = useCallback(async () => {
@@ -280,9 +311,9 @@ export default function App() {
       setMeetings(payload);
       setStatus(`loaded ${payload.length} meeting(s)`);
     } catch (error) {
-      const message = formatError(error, "unknown error");
+      const message = formatError(error, 'unknown error');
       setErrorMessage(message);
-      setStatus("failed to load meetings");
+      setStatus('failed to load meetings');
     } finally {
       setLoading(false);
     }
@@ -297,7 +328,7 @@ export default function App() {
     <T extends ServerSignal>(signal: ClientSignal): Promise<T> => {
       const ws = wsRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) {
-        return Promise.reject(new Error("signaling socket is not open"));
+        return Promise.reject(new Error('signaling socket is not open'));
       }
 
       const requestId = nextRequestIdRef.current++;
@@ -342,7 +373,7 @@ export default function App() {
 
       try {
         const consumed = await sendRequest<ConsumedSignal>({
-          type: "consume",
+          type: 'consume',
           transport_id: recvTransport.id,
           producer_id: producerId,
           rtp_capabilities: device.rtpCapabilities,
@@ -360,19 +391,21 @@ export default function App() {
         if (!remoteStreamRef.current) {
           remoteStreamRef.current = new MediaStream();
         }
-        remoteStreamRef.current.addTrack(consumer.track as any);
+        remoteStreamRef.current.addTrack(
+          consumer.track as unknown as MediaStreamTrack,
+        );
 
         await sendRequest<ConsumerResumedSignal>({
-          type: "resume_consumer",
+          type: 'resume_consumer',
           consumer_id: consumer.id,
         });
 
         setStatus(`receiving media in ${meetingId}`);
       } catch (error) {
         consumedProducerIdsRef.current.delete(producerId);
-        const message = formatError(error, "failed to consume remote audio");
+        const message = formatError(error, 'failed to consume remote audio');
         setErrorMessage(message);
-        setStatus("failed consuming remote audio");
+        setStatus('failed consuming remote audio');
       }
     },
     [sendRequest],
@@ -397,12 +430,12 @@ export default function App() {
       meetingId: string,
     ): Promise<Transport> => {
       const created = await sendRequest<WebrtcTransportCreatedSignal>({
-        type: "create_webrtc_transport",
+        type: 'create_webrtc_transport',
         direction,
       });
 
       const transport: Transport =
-        direction === "send"
+        direction === 'send'
           ? device.createSendTransport({
               id: created.transport_id,
               iceParameters: created.ice_parameters,
@@ -418,11 +451,11 @@ export default function App() {
               sctpParameters: created.sctp_parameters,
             });
 
-      transport.on("connect", ({ dtlsParameters }, callback, errback) => {
+      transport.on('connect', ({ dtlsParameters }, callback, errback) => {
         void (async () => {
           try {
             await sendRequest<TransportConnectedSignal>({
-              type: "connect_webrtc_transport",
+              type: 'connect_webrtc_transport',
               transport_id: created.transport_id,
               dtls_parameters: dtlsParameters as DtlsParameters,
             });
@@ -433,25 +466,28 @@ export default function App() {
         })();
       });
 
-      if (direction === "send") {
-        transport.on("produce", ({ kind, rtpParameters }, callback, errback) => {
-          void (async () => {
-            try {
-              const produced = await sendRequest<ProducedSignal>({
-                type: "produce",
-                transport_id: created.transport_id,
-                kind: kind as MediaKind,
-                rtp_parameters: rtpParameters as RtpParameters,
-              });
-              callback({ id: produced.producer_id });
-            } catch (error) {
-              errback(error as Error);
-            }
-          })();
-        });
+      if (direction === 'send') {
+        transport.on(
+          'produce',
+          ({ kind, rtpParameters }, callback, errback) => {
+            void (async () => {
+              try {
+                const produced = await sendRequest<ProducedSignal>({
+                  type: 'produce',
+                  transport_id: created.transport_id,
+                  kind: kind as MediaKind,
+                  rtp_parameters: rtpParameters as RtpParameters,
+                });
+                callback({ id: produced.producer_id });
+              } catch (error) {
+                errback(error as Error);
+              }
+            })();
+          },
+        );
       }
 
-      transport.on("connectionstatechange", (state) => {
+      transport.on('connectionstatechange', (state) => {
         setConnectionState(state);
         setStatus(`webrtc ${state} (${meetingId}, ${direction})`);
       });
@@ -463,19 +499,19 @@ export default function App() {
 
   const handleServerEvent = useCallback(
     (signal: ServerSignal, meetingId: string) => {
-      if (signal.type === "new_producer") {
+      if (signal.type === 'new_producer') {
         void consumeProducer(signal.producer_id, meetingId);
         return;
       }
-      if (signal.type === "peer_left") {
+      if (signal.type === 'peer_left') {
         setStatus(`peer ${signal.peer_id} left ${meetingId}`);
         return;
       }
-      if (signal.type === "meeting_snapshot") {
+      if (signal.type === 'meeting_snapshot') {
         setActiveMeeting(signal.meeting);
         return;
       }
-      if (signal.type === "agent_text") {
+      if (signal.type === 'agent_text') {
         setAgentUtterances((current) => [
           ...current,
           {
@@ -488,23 +524,23 @@ export default function App() {
         setStatus(`${signal.participant_name} responded`);
         return;
       }
-      if (signal.type === "meeting_ended") {
+      if (signal.type === 'meeting_ended') {
         setStatus(`meeting ended at ${signal.ended_at}`);
         setActiveMeeting((current) =>
           current
-            ? { ...current, state: "ended", ended_at: signal.ended_at }
+            ? { ...current, state: 'ended', ended_at: signal.ended_at }
             : current,
         );
         return;
       }
-      if (signal.type === "minutes_ready") {
+      if (signal.type === 'minutes_ready') {
         setMinutes(signal.minutes);
-        setStatus("minutes generated");
+        setStatus('minutes generated');
         return;
       }
-      if (signal.type === "error") {
+      if (signal.type === 'error') {
         setErrorMessage(signal.message);
-        setStatus("server rejected signaling message");
+        setStatus('server rejected signaling message');
       }
     },
     [consumeProducer],
@@ -514,8 +550,10 @@ export default function App() {
     async (meeting: MeetingSnapshot) => {
       const participant = joinableParticipant(meeting);
       if (!participant) {
-        setErrorMessage("no human participant is available to join this meeting");
-        setStatus("cannot join meeting");
+        setErrorMessage(
+          'no human participant is available to join this meeting',
+        );
+        setStatus('cannot join meeting');
         return;
       }
 
@@ -524,15 +562,15 @@ export default function App() {
       setMinutes(null);
       setAgentUtterances([]);
       setStatus(`connecting to ${meeting.title}...`);
-      setConnectionState("connecting");
-      setMicStatus("requesting microphone...");
-      setAudioSendStatus("not sending");
+      setConnectionState('connecting');
+      setMicStatus('requesting microphone...');
+      setAudioSendStatus('not sending');
 
       const ws = new WebSocket(SIGNAL_URL);
       wsRef.current = ws;
 
       ws.onmessage = (event) => {
-        if (typeof event.data !== "string") {
+        if (typeof event.data !== 'string') {
           return;
         }
 
@@ -540,13 +578,13 @@ export default function App() {
         try {
           envelope = JSON.parse(event.data) as ServerEnvelope;
         } catch (error) {
-          const message = formatError(error, "failed to parse signal payload");
+          const message = formatError(error, 'failed to parse signal payload');
           setErrorMessage(message);
           return;
         }
 
         const requestId = envelope.request_id;
-        if (typeof requestId === "number") {
+        if (typeof requestId === 'number') {
           const pending = pendingRequestsRef.current.get(requestId);
           if (!pending) {
             return;
@@ -555,7 +593,7 @@ export default function App() {
           pendingRequestsRef.current.delete(requestId);
           clearTimeout(pending.timeout);
 
-          if (envelope.type === "error") {
+          if (envelope.type === 'error') {
             pending.reject(new Error(envelope.message));
           } else {
             pending.resolve(envelope);
@@ -567,13 +605,13 @@ export default function App() {
       };
 
       ws.onerror = () => {
-        setStatus("websocket error");
+        setStatus('websocket error');
       };
 
       ws.onclose = () => {
         if (wsRef.current === ws) {
           disconnect();
-          setStatus("disconnected");
+          setStatus('disconnected');
         }
       };
 
@@ -581,7 +619,7 @@ export default function App() {
         try {
           const micAllowed = await requestMicrophonePermission();
           if (!micAllowed) {
-            throw new Error("microphone permission denied");
+            throw new Error('microphone permission denied');
           }
 
           const stream = await mediaDevices.getUserMedia({
@@ -590,23 +628,23 @@ export default function App() {
           });
           const audioTracks = stream.getAudioTracks?.() ?? [];
           if (audioTracks.length === 0) {
-            throw new Error("microphone stream has no audio tracks");
+            throw new Error('microphone stream has no audio tracks');
           }
 
           localStreamRef.current = stream;
-          setMicEnabled(audioTracks.every((track: any) => track.enabled !== false));
-          setMicStatus("capturing");
+          setMicEnabled(audioTracks.every((track) => track.enabled !== false));
+          setMicStatus('capturing');
 
           if (!globalsRegisteredRef.current) {
             registerGlobals();
             globalsRegisteredRef.current = true;
           }
 
-          const device = new Device({ handlerName: "ReactNative106" });
+          const device = new Device({ handlerName: 'ReactNative106' });
           deviceRef.current = device;
 
           const joined = await sendRequest<MeetingJoinedSignal>({
-            type: "join_meeting",
+            type: 'join_meeting',
             meeting_id: meeting.meeting_id,
             participant_id: participant.participant_id,
           });
@@ -615,8 +653,16 @@ export default function App() {
             routerRtpCapabilities: joined.router_rtp_capabilities,
           });
 
-          const sendTransport = await createTransport(device, "send", meeting.meeting_id);
-          const recvTransport = await createTransport(device, "recv", meeting.meeting_id);
+          const sendTransport = await createTransport(
+            device,
+            'send',
+            meeting.meeting_id,
+          );
+          const recvTransport = await createTransport(
+            device,
+            'recv',
+            meeting.meeting_id,
+          );
 
           sendTransportRef.current = sendTransport;
           recvTransportRef.current = recvTransport;
@@ -629,8 +675,8 @@ export default function App() {
 
           startAudioStatsLoop(sendTransport);
 
-          if (!device.canProduce("audio")) {
-            throw new Error("this device cannot produce audio");
+          if (!device.canProduce('audio')) {
+            throw new Error('this device cannot produce audio');
           }
 
           const producer = await sendTransport.produce({
@@ -646,9 +692,9 @@ export default function App() {
 
           await drainQueuedProducers(joined.meeting.meeting_id);
         } catch (error) {
-          const message = formatError(error, "unknown connect error");
+          const message = formatError(error, 'unknown connect error');
           setErrorMessage(message);
-          setStatus("connection failed");
+          setStatus('connection failed');
           disconnect();
         }
       };
@@ -666,7 +712,7 @@ export default function App() {
   );
 
   const leaveMeeting = useCallback(() => {
-    setStatus("left meeting");
+    setStatus('left meeting');
     disconnect();
   }, [disconnect]);
 
@@ -676,13 +722,13 @@ export default function App() {
     }
     try {
       await sendRequest<MeetingEndedSignal>({
-        type: "end_meeting",
+        type: 'end_meeting',
         meeting_id: activeMeetingId,
       });
     } catch (error) {
-      const message = formatError(error, "failed to end meeting");
+      const message = formatError(error, 'failed to end meeting');
       setErrorMessage(message);
-      setStatus("failed to end meeting");
+      setStatus('failed to end meeting');
     }
   }, [activeMeetingId, sendRequest]);
 
@@ -698,7 +744,9 @@ export default function App() {
           <Text style={styles.title}>Workinabox</Text>
           <Text style={styles.subtitle}>Backend: {HTTP_BASE_URL}</Text>
           <Text style={styles.status}>Status: {status}</Text>
-          {errorMessage ? <Text style={styles.error}>Error: {errorMessage}</Text> : null}
+          {errorMessage ? (
+            <Text style={styles.error}>Error: {errorMessage}</Text>
+          ) : null}
         </View>
 
         {activeMeeting ? (
@@ -708,17 +756,26 @@ export default function App() {
               <Text style={styles.status}>Meeting ID: {activeMeetingId}</Text>
               <Text style={styles.status}>State: {activeMeeting.state}</Text>
               <Text style={styles.status}>Connection: {connectionState}</Text>
-              <Text style={styles.status}>Joined as: {activeParticipantName ?? "unknown"}</Text>
+              <Text style={styles.status}>
+                Joined as: {activeParticipantName ?? 'unknown'}
+              </Text>
               <Text style={styles.status}>Mic: {micStatus}</Text>
-              <Text style={styles.status}>Outbound audio: {audioSendStatus}</Text>
+              <Text style={styles.status}>
+                Outbound audio: {audioSendStatus}
+              </Text>
             </View>
 
             <View style={styles.actions}>
               <Pressable style={styles.button} onPress={toggleMicrophone}>
-                <Text style={styles.buttonText}>{micEnabled ? "Mute Mic" : "Unmute Mic"}</Text>
+                <Text style={styles.buttonText}>
+                  {micEnabled ? 'Mute Mic' : 'Unmute Mic'}
+                </Text>
               </Pressable>
               {isOwner ? (
-                <Pressable style={styles.warningButton} onPress={() => void endMeeting()}>
+                <Pressable
+                  style={styles.warningButton}
+                  onPress={() => void endMeeting()}
+                >
                   <Text style={styles.buttonText}>End Meeting</Text>
                 </Pressable>
               ) : null}
@@ -740,7 +797,8 @@ export default function App() {
               <Text style={styles.sectionTitle}>Participants</Text>
               {activeMeeting.participants.map((participant) => (
                 <Text key={participant.participant_id} style={styles.listItem}>
-                  • {participant.name} ({participant.kind}, {participant.meeting_role})
+                  • {participant.name} ({participant.kind},{' '}
+                  {participant.meeting_role})
                 </Text>
               ))}
             </View>
@@ -752,7 +810,9 @@ export default function App() {
               ) : (
                 agentUtterances.map((utterance) => (
                   <View key={utterance.utterance_id} style={styles.agentCard}>
-                    <Text style={styles.agentName}>{utterance.participant_name}</Text>
+                    <Text style={styles.agentName}>
+                      {utterance.participant_name}
+                    </Text>
                     <Text style={styles.agentText}>{utterance.text}</Text>
                   </View>
                 ))
@@ -764,14 +824,19 @@ export default function App() {
               {minutes ? (
                 <>
                   <Text style={styles.status}>Owner: {minutes.owner_name}</Text>
-                  <Text style={styles.status}>Moderator: {minutes.moderator_name}</Text>
+                  <Text style={styles.status}>
+                    Moderator: {minutes.moderator_name}
+                  </Text>
                   <Text style={styles.status}>Ended: {minutes.ended_at}</Text>
                   {minutes.agenda.map((item) => (
                     <View key={item.agenda_item_id} style={styles.minutesItem}>
                       <Text style={styles.minutesTitle}>{item.phrase}</Text>
                       {item.decisions.length > 0 ? (
                         item.decisions.map((decision, index) => (
-                          <Text key={`${item.agenda_item_id}-${index}`} style={styles.listItem}>
+                          <Text
+                            key={`${item.agenda_item_id}-${index}`}
+                            style={styles.listItem}
+                          >
                             • {decision}
                           </Text>
                         ))
@@ -782,14 +847,19 @@ export default function App() {
                   ))}
                 </>
               ) : (
-                <Text style={styles.empty}>Minutes will appear after the meeting ends.</Text>
+                <Text style={styles.empty}>
+                  Minutes will appear after the meeting ends.
+                </Text>
               )}
             </View>
           </ScrollView>
         ) : (
           <>
             <View style={styles.actions}>
-              <Pressable style={styles.button} onPress={() => void fetchMeetings()}>
+              <Pressable
+                style={styles.button}
+                onPress={() => void fetchMeetings()}
+              >
                 <Text style={styles.buttonText}>Refresh Meetings</Text>
               </Pressable>
             </View>
@@ -812,17 +882,20 @@ export default function App() {
                     >
                       <Text style={styles.meetingName}>{item.title}</Text>
                       <Text style={styles.meetingMeta}>
-                        {item.participants.length} participant(s) • {item.agenda.length} agenda
-                        item(s)
+                        {item.participants.length} participant(s) •{' '}
+                        {item.agenda.length} agenda item(s)
                       </Text>
                       <Text style={styles.meetingMeta}>
-                        Join as: {participant ? participant.name : "no human available"}
+                        Join as:{' '}
+                        {participant ? participant.name : 'no human available'}
                       </Text>
                       <Text style={styles.meetingAction}>Tap to join</Text>
                     </Pressable>
                   );
                 }}
-                ListEmptyComponent={<Text style={styles.empty}>No meetings found.</Text>}
+                ListEmptyComponent={
+                  <Text style={styles.empty}>No meetings found.</Text>
+                }
               />
             )}
           </>
@@ -835,7 +908,7 @@ export default function App() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: "#f4f6f8",
+    backgroundColor: '#f4f6f8',
   },
   container: {
     flex: 1,
@@ -848,56 +921,56 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 28,
-    fontWeight: "700",
-    color: "#1b1f24",
+    fontWeight: '700',
+    color: '#1b1f24',
   },
   subtitle: {
     fontSize: 12,
-    color: "#59636e",
+    color: '#59636e',
   },
   status: {
     fontSize: 14,
-    color: "#2f3b4a",
+    color: '#2f3b4a',
   },
   error: {
     marginTop: 4,
-    color: "#9f1a1a",
+    color: '#9f1a1a',
   },
   actions: {
-    flexDirection: "row",
-    flexWrap: "wrap",
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 10,
     marginBottom: 16,
   },
   button: {
-    backgroundColor: "#1f6feb",
+    backgroundColor: '#1f6feb',
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 10,
   },
   warningButton: {
-    backgroundColor: "#d97706",
+    backgroundColor: '#d97706',
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 10,
   },
   dangerButton: {
-    backgroundColor: "#cf222e",
+    backgroundColor: '#cf222e',
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 10,
   },
   buttonText: {
-    color: "#ffffff",
-    fontWeight: "600",
+    color: '#ffffff',
+    fontWeight: '600',
   },
   meetingScreen: {
     gap: 12,
     paddingBottom: 32,
   },
   panel: {
-    backgroundColor: "#ffffff",
-    borderColor: "#d0d7de",
+    backgroundColor: '#ffffff',
+    borderColor: '#d0d7de',
     borderWidth: 1,
     borderRadius: 12,
     padding: 16,
@@ -905,58 +978,58 @@ const styles = StyleSheet.create({
   },
   panelTitle: {
     fontSize: 22,
-    fontWeight: "700",
-    color: "#1f2328",
+    fontWeight: '700',
+    color: '#1f2328',
   },
   sectionTitle: {
     fontSize: 18,
-    fontWeight: "700",
-    color: "#1f2328",
+    fontWeight: '700',
+    color: '#1f2328',
   },
   meetingList: {
     gap: 10,
     paddingBottom: 24,
   },
   meetingCard: {
-    backgroundColor: "#ffffff",
+    backgroundColor: '#ffffff',
     padding: 14,
     borderRadius: 12,
-    borderColor: "#d0d7de",
+    borderColor: '#d0d7de',
     borderWidth: 1,
     gap: 4,
   },
   meetingName: {
     fontSize: 18,
-    fontWeight: "600",
-    color: "#1f2328",
+    fontWeight: '600',
+    color: '#1f2328',
   },
   meetingMeta: {
     fontSize: 13,
-    color: "#59636e",
+    color: '#59636e',
   },
   meetingAction: {
     marginTop: 6,
     fontSize: 12,
-    color: "#1f6feb",
+    color: '#1f6feb',
   },
   listItem: {
-    color: "#2f3b4a",
+    color: '#2f3b4a',
     fontSize: 14,
   },
   agentCard: {
     borderRadius: 10,
-    backgroundColor: "#f6f8fa",
+    backgroundColor: '#f6f8fa',
     padding: 12,
     gap: 4,
   },
   agentName: {
     fontSize: 14,
-    fontWeight: "700",
-    color: "#1f2328",
+    fontWeight: '700',
+    color: '#1f2328',
   },
   agentText: {
     fontSize: 14,
-    color: "#2f3b4a",
+    color: '#2f3b4a',
   },
   minutesItem: {
     gap: 6,
@@ -964,11 +1037,11 @@ const styles = StyleSheet.create({
   },
   minutesTitle: {
     fontSize: 15,
-    fontWeight: "700",
-    color: "#1f2328",
+    fontWeight: '700',
+    color: '#1f2328',
   },
   empty: {
-    color: "#59636e",
+    color: '#59636e',
     fontSize: 14,
   },
 });
