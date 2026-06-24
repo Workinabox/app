@@ -6,11 +6,11 @@ import type {
   RtpCapabilities,
   RtpParameters,
   SctpParameters,
-} from "mediasoup-client/types";
+} from 'mediasoup-client/types';
 
-export type ParticipantKind = "human" | "agent";
-export type MeetingRole = "owner" | "moderator" | "participant";
-export type MeetingState = "active" | "ended";
+export type ParticipantKind = 'human' | 'agent';
+export type MeetingRole = 'owner' | 'moderator' | 'participant';
+export type MeetingState = 'active' | 'ended';
 
 export type ParticipantSummary = {
   participant_id: string;
@@ -58,34 +58,34 @@ export type AgentUtterance = {
   text: string;
 };
 
-export type TransportDirection = "send" | "recv";
+export type TransportDirection = 'send' | 'recv';
 
 export type ClientSignal =
-  | { type: "join_meeting"; meeting_id: string; participant_id: string }
-  | { type: "end_meeting"; meeting_id: string }
-  | { type: "create_webrtc_transport"; direction: TransportDirection }
+  | { type: 'join_meeting'; meeting_id: string; participant_id: string }
+  | { type: 'end_meeting'; meeting_id: string }
+  | { type: 'create_webrtc_transport'; direction: TransportDirection }
   | {
-      type: "connect_webrtc_transport";
+      type: 'connect_webrtc_transport';
       transport_id: string;
       dtls_parameters: DtlsParameters;
     }
   | {
-      type: "produce";
+      type: 'produce';
       transport_id: string;
       kind: MediaKind;
       rtp_parameters: RtpParameters;
     }
   | {
-      type: "consume";
+      type: 'consume';
       transport_id: string;
       producer_id: string;
       rtp_capabilities: RtpCapabilities;
     }
-  | { type: "resume_consumer"; consumer_id: string }
-  | { type: "ping" };
+  | { type: 'resume_consumer'; consumer_id: string }
+  | { type: 'ping' };
 
 export type MeetingJoinedSignal = {
-  type: "meeting_joined";
+  type: 'meeting_joined';
   peer_id: string;
   participant_id: string;
   meeting: MeetingSnapshot;
@@ -94,12 +94,12 @@ export type MeetingJoinedSignal = {
 };
 
 export type MeetingSnapshotSignal = {
-  type: "meeting_snapshot";
+  type: 'meeting_snapshot';
   meeting: MeetingSnapshot;
 };
 
 export type AgentTextSignal = {
-  type: "agent_text";
+  type: 'agent_text';
   meeting_id: string;
   participant_id: string;
   participant_name: string;
@@ -108,20 +108,20 @@ export type AgentTextSignal = {
 };
 
 export type MeetingEndedSignal = {
-  type: "meeting_ended";
+  type: 'meeting_ended';
   meeting_id: string;
   ended_by_participant_id: string;
   ended_at: string;
 };
 
 export type MinutesReadySignal = {
-  type: "minutes_ready";
+  type: 'minutes_ready';
   meeting_id: string;
   minutes: MinutesDocument;
 };
 
 export type WebrtcTransportCreatedSignal = {
-  type: "webrtc_transport_created";
+  type: 'webrtc_transport_created';
   direction: TransportDirection;
   transport_id: string;
   ice_parameters: IceParameters;
@@ -131,23 +131,23 @@ export type WebrtcTransportCreatedSignal = {
 };
 
 export type TransportConnectedSignal = {
-  type: "transport_connected";
+  type: 'transport_connected';
   transport_id: string;
 };
 
 export type ProducedSignal = {
-  type: "produced";
+  type: 'produced';
   producer_id: string;
 };
 
 export type NewProducerSignal = {
-  type: "new_producer";
+  type: 'new_producer';
   peer_id: string;
   producer_id: string;
 };
 
 export type ConsumedSignal = {
-  type: "consumed";
+  type: 'consumed';
   consumer_id: string;
   producer_id: string;
   kind: MediaKind;
@@ -155,22 +155,22 @@ export type ConsumedSignal = {
 };
 
 export type ConsumerResumedSignal = {
-  type: "consumer_resumed";
+  type: 'consumer_resumed';
   consumer_id: string;
 };
 
 export type PeerLeftSignal = {
-  type: "peer_left";
+  type: 'peer_left';
   peer_id: string;
 };
 
 export type ErrorSignal = {
-  type: "error";
+  type: 'error';
   message: string;
 };
 
 export type PongSignal = {
-  type: "pong";
+  type: 'pong';
 };
 
 export type ServerSignal =
