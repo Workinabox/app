@@ -40,7 +40,10 @@ module.exports = tseslint.config(
     // Config/entry files are CommonJS in this React Native project.
     files: ['**/*.js'],
     languageOptions: {
-      globals: globals.node,
+      globals: {
+        ...globals.node,
+        ...globals.jest,
+      },
     },
     rules: {
       '@typescript-eslint/no-require-imports': 'off',
