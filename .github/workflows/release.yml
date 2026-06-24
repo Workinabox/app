@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  push:
+    tags: [ 'v*' ]
+
+permissions:
+  contents: write
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  release-android:
+    name: Release Android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # New Architecture compiles native C++, so the exact pinned NDK + CMake
+      # from android/build.gradle must be present on the runner.
+      - name: Install Android NDK and CMake
+        run: ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager "ndk;27.1.12297006" "cmake;3.22.1"
+
+      # *.keystore is gitignored. The release buildType currently reuses the debug
+      # signing config (android/app/build.gradle), so generate that debug keystore.
+      # A fresh key is created per run, so successive release APKs are NOT
+      # upgrade-compatible with each other -- acceptable for this debug-signed
+      # first pass. Production signing + Play upload are follow-ups (docs/ROADMAP.md).
+      - name: Generate debug keystore
+        run: keytool -genkeypair -v -keystore android/app/debug.keystore -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+
+      - name: Build release APK
+        run: ./gradlew assembleRelease --no-daemon
+        working-directory: android
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: android/app/build/outputs/apk/release/app-release.apk
