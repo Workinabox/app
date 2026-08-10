@@ -41,3 +41,10 @@
 - Favor smaller commits. Single responsability that concentrate on one concept/part/story/feature/struct
 - Single responsability principle always
 - Never EVER deploy anything to anywhere without being explicitly told to. Things like terraform apply for example.
+
+<!-- The bullets above are the shared core, identical across every repo's CLAUDE.md — edit all copies together. Below is app-specific. -->
+
+## app-specific
+
+- This app is **non-functional against the current backend and parked** (TLS + auth + protocol drift; see README and SECURITY_REVIEW_OPUS48 M15). Do not assume the meeting flow works end to end.
+- Backend connection config lives in `src/backendConfig.ts` (not `App.tsx`).
