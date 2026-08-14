@@ -44,7 +44,7 @@ jobs:
       # signing config (android/app/build.gradle), so generate that debug keystore.
       # A fresh key is created per run, so successive release APKs are NOT
       # upgrade-compatible with each other -- acceptable for this debug-signed
-      # first pass. Production signing + Play upload are follow-ups (docs/ROADMAP.md).
+      # first pass. Production signing + Play upload are follow-ups.
       - name: Generate debug keystore
         run: keytool -genkeypair -v -keystore android/app/debug.keystore -storepass android -keypass android -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
 
