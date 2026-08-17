@@ -6,6 +6,7 @@
   "license": "MIT",
   "main": "index.js",
   "scripts": {
+    "postinstall": "node scripts/fix-gradle-scan.js",
     "start": "react-native start",
     "android": "react-native run-android",
     "ios": "react-native run-ios",
