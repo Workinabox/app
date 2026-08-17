@@ -1,9 +1,0 @@
-{
-  // This folder has no settings.gradle at its root, so the Gradle extension falls back to
-  // globbing `**/{settings.gradle,build.gradle,...}` across the whole tree and tries to
-  // configure the build files shipped inside node_modules (react-native's build-from-source
-  // settings file, react-native-webrtc's library module) as standalone builds, which cannot
-  // work. Naming the root explicitly skips that scan — discovery still works, nothing is
-  // disabled. Paths are relative to the folder VS Code has open, i.e. this repo.
-  "gradle.nestedProjects": ["android"]
-}
