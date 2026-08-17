@@ -65,7 +65,10 @@ let changed = 0;
 for (const f of ['settings.gradle.kts', 'build.gradle.kts']) {
   const file = path.join(nodeModules, 'react-native', f);
   if (fs.existsSync(file)) {
-    changed += writeIfDifferent(file, stub(`react-native's build-from-source ${f}`));
+    changed += writeIfDifferent(
+      file,
+      stub(`react-native's build-from-source ${f}`),
+    );
   }
 }
 
