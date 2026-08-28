@@ -1,19 +1,27 @@
 /**
  * Neutralizes the Gradle build files that ship inside node_modules so editor
  * Gradle integrations (VS Code's "Gradle for Java", Android Studio's scan) do
- * not try to configure them as standalone builds and fail:
+ * not try to configure them as standalone builds and fail.
  *
- * - react-native publishes its repo-root settings.gradle.kts/build.gradle.kts
- *   (the "build from source" entry point) whose project paths do not exist in
- *   the npm package. Both are stubbed; the app build consumes prebuilt
- *   artifacts and never reads them.
- * - Packages that ship an android/ library module without a settings file
- *   (react-native-webrtc) get an empty settings.gradle at the package root.
- *   Scanners then treat the package root as the build root (an empty build
- *   that configures cleanly) instead of configuring android/build.gradle
- *   standalone, where com.android.library cannot resolve. The app build still
- *   includes the module as a subproject via autolinking, which never reads a
- *   settings file at that level.
+ * The VS Code extension picks build roots like this (RootProjectsStore):
+ *   roots = { dirs containing settings.gradle[.kts] }
+ *         + { dirs containing build.gradle[.kts] with no such ancestor dir }
+ * and it scans the whole workspace whenever the opened folder is not itself a
+ * Gradle project — node_modules included. So:
+ *
+ * - node_modules/settings.gradle: an empty settings file makes node_modules the
+ *   build root for everything under it, so no library's android/build.gradle is
+ *   configured standalone any more (react-native-webrtc's fails there because
+ *   com.android.library is only on the classpath in the app build, which pulls
+ *   these in as subprojects via autolinking and never reads a settings file at
+ *   that level). One marker covers nested node_modules too.
+ * - react-native ships its repo-root settings.gradle.kts/build.gradle.kts (the
+ *   "build from source" entry point), whose project paths do not exist inside
+ *   the npm package; a dir with a settings file is a root regardless of its
+ *   ancestors, so those two must be stubbed individually. The app build uses
+ *   prebuilt artifacts and never reads them (android/settings.gradle only
+ *   includes @react-native/gradle-plugin, which configures fine and is left
+ *   alone).
  *
  * Runs from npm postinstall; idempotent.
  */
@@ -22,10 +30,9 @@ const path = require('path');
 
 const nodeModules = path.join(__dirname, '..', 'node_modules');
 
-const stub = (original) =>
-  '// Stubbed by scripts/fix-gradle-scan.js (npm postinstall) so editor Gradle\n' +
-  '// scanners do not configure this directory as a standalone build.\n' +
-  `// Replaces: ${original}\n`;
+const marker = (why) =>
+  '// Written by scripts/fix-gradle-scan.js (npm postinstall) so editor Gradle\n' +
+  `// scanners do not configure this directory as a standalone build.\n// ${why}\n`;
 
 function writeIfDifferent(file, content) {
   if (fs.existsSync(file) && fs.readFileSync(file, 'utf8') === content) {
@@ -35,54 +42,23 @@ function writeIfDifferent(file, content) {
   return 1;
 }
 
-function packageDirs() {
-  const dirs = [];
-  for (const entry of fs.readdirSync(nodeModules)) {
-    if (entry.startsWith('.')) {
-      continue;
-    }
-    const p = path.join(nodeModules, entry);
-    if (!fs.statSync(p).isDirectory()) {
-      continue;
-    }
-    if (entry.startsWith('@')) {
-      for (const sub of fs.readdirSync(p)) {
-        dirs.push(path.join(p, sub));
-      }
-    } else {
-      dirs.push(p);
-    }
-  }
-  return dirs.filter((d) => fs.statSync(d).isDirectory());
-}
-
 if (!fs.existsSync(nodeModules)) {
   process.exit(0);
 }
 
 let changed = 0;
 
+changed += writeIfDifferent(
+  path.join(nodeModules, 'settings.gradle'),
+  marker('Empty build root for every package below this directory.'),
+);
+
 for (const f of ['settings.gradle.kts', 'build.gradle.kts']) {
   const file = path.join(nodeModules, 'react-native', f);
   if (fs.existsSync(file)) {
     changed += writeIfDifferent(
       file,
-      stub(`react-native's build-from-source ${f}`),
-    );
-  }
-}
-
-for (const dir of packageDirs()) {
-  const hasSettings = ['settings.gradle', 'settings.gradle.kts'].some((f) =>
-    fs.existsSync(path.join(dir, f)),
-  );
-  const hasAndroidBuild = ['build.gradle', 'build.gradle.kts'].some((f) =>
-    fs.existsSync(path.join(dir, 'android', f)),
-  );
-  if (!hasSettings && hasAndroidBuild) {
-    changed += writeIfDifferent(
-      path.join(dir, 'settings.gradle'),
-      stub('nothing; added file marks the package root as the build root'),
+      marker(`Replaces react-native's build-from-source ${f}.`),
     );
   }
 }
